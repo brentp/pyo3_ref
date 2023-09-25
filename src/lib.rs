@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-struct Data {
+pub struct Data {
     x: [f64; 1000],
 }
 
@@ -18,20 +18,30 @@ impl Outer {
 #[pyclass]
 struct PyData {
     // Q: what to put here for mutable access to &Data since we can't have lifetime.
-    data: Py<Data>,
+    outer: Arc<Mutex<Outer>>,
 }
 
 #[pymethods]
 impl PyData {
-    fn set_data(&mut self, i: usize, x: f64, py: Python<'_>) {
+    fn set_data(&mut self, i: usize, x: f64, py: Python<'_>) -> PyResult<()> {
         // ???
-        self.data.x[i] = x;
+        match self.outer.lock() {
+            Ok(mut outer) => {
+                outer.data_mut().x[i] = x;
+            }
+            Err(_) => {
+                return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                    "Failed to lock",
+                ))
+            }
+        }
+        Ok(())
     }
 }
 
 #[pyclass]
 struct PyOuter {
-    rust: Outer,
+    rust: Arc<Mutex<Outer>>,
 }
 
 #[pymethods]
@@ -39,22 +49,17 @@ impl PyOuter {
     #[new]
     fn new() -> Self {
         Self {
-            rust: Outer {
+            rust: Arc::new(Mutex::new(Outer {
                 _data: Data { x: [0.0; 1000] },
-            },
+            })),
         }
     }
 
     #[getter]
-    fn data(&mut self, py: Python<'_>) -> PyResult<Py<PyData>> {
-        // Q: what to put here? PyCell?
-
-        Py::new(
-            py,
-            PyData {
-                data: Py::new(py, self.rust.data_mut())?,
-            },
-        )
+    fn data(&mut self, py: Python<'_>) -> PyResult<PyData> {
+        Ok(PyData {
+            outer: self.rust.clone(),
+        })
     }
 }
 
@@ -71,6 +76,14 @@ mod tests {
 
     #[test]
     fn test_set_data() {
-        Python::with_gil(|py| {});
+        // create a PyOuter, access .data and set a value
+        Python::with_gil(|py| {
+            let mut outer = PyOuter::new();
+            let mut data = outer.data(py).unwrap();
+            data.set_data(0, 1.0, py).unwrap();
+
+            // check that the value was set
+            assert_eq!(outer.rust.lock().unwrap().data_mut().x[0], 1.0);
+        });
     }
 }

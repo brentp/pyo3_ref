@@ -1,76 +1,48 @@
+use std::sync::{Arc, Mutex};
 use pyo3::prelude::*;
-use std::sync::Arc;
+use noodles::vcf;
 
-struct Data {
-    x: [f64; 1000],
+#[pyclass]
+struct InfoWrapper {
+    record: Arc<Mutex<vcf::Record>>,
 }
 
-pub struct Outer {
-    _data: Data,
-}
-
-impl Outer {
-    pub fn data_mut(&mut self) -> &mut Data {
-        &mut self._data
+#[pymethods]
+impl InfoWrapper {
+    fn set(&self, key: &str, value: i32) -> PyResult<()> {
+        let mut record = self.record.lock().unwrap();
+        // Adjust according to the actual noodles API to set a field in Info.
+        let val = vcf::record::info::field::Value::Integer(value);
+        let key = vcf::record::info::field::Key::Other(key);
+        record.info_mut().insert(key, Some(val));
+        Ok(())
     }
 }
 
 #[pyclass]
-struct PyData {
-    // Q: what to put here for mutable access to &Data since we can't have lifetime.
-    data: Py<Data>,
+struct RecordWrapper {
+    record: Arc<Mutex<vcf::Record>>,
 }
 
 #[pymethods]
-impl PyData {
-    fn set_data(&mut self, i: usize, x: f64, py: Python<'_>) {
-        // ???
-        self.data.x[i] = x;
-    }
-}
-
-#[pyclass]
-struct PyOuter {
-    rust: Outer,
-}
-
-#[pymethods]
-impl PyOuter {
+impl RecordWrapper {
     #[new]
     fn new() -> Self {
-        Self {
-            rust: Outer {
-                _data: Data { x: [0.0; 1000] },
-            },
+        RecordWrapper {
+            record: Arc::new(Mutex::new(vcf::Record::default())),
         }
     }
 
-    #[getter]
-    fn data(&mut self, py: Python<'_>) -> PyResult<Py<PyData>> {
-        // Q: what to put here? PyCell?
-
-        Py::new(
-            py,
-            PyData {
-                data: Py::new(py, self.rust.data_mut())?,
-            },
-        )
+    fn info(&self) -> InfoWrapper {
+        InfoWrapper {
+            record: Arc::clone(&self.record),
+        }
     }
 }
 
 #[pymodule]
-fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<PyOuter>()?;
-    m.add_class::<PyData>()?;
+fn noodles_wrapper(py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<RecordWrapper>()?;
+    m.add_class::<InfoWrapper>()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_set_data() {
-        Python::with_gil(|py| {});
-    }
 }

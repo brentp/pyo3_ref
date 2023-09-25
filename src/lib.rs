@@ -1,10 +1,12 @@
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug)]
 pub struct Data {
     x: [f64; 1000],
 }
 
+#[derive(Debug)]
 pub struct Outer {
     _data: Data,
 }
@@ -15,6 +17,7 @@ impl Outer {
     }
 }
 
+#[derive(Debug)]
 #[pyclass]
 struct PyData {
     // Q: what to put here for mutable access to &Data since we can't have lifetime.
@@ -36,6 +39,10 @@ impl PyData {
             }
         }
         Ok(())
+    }
+
+    fn __repr__(&self) -> PyResult<String> {
+        Ok(format!("{:?}", self.outer.lock().unwrap()._data.x))
     }
 }
 
@@ -64,7 +71,7 @@ impl PyOuter {
 }
 
 #[pymodule]
-fn rust(_py: Python, m: &PyModule) -> PyResult<()> {
+fn pyo3_ref(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyOuter>()?;
     m.add_class::<PyData>()?;
     Ok(())

@@ -54,7 +54,7 @@ impl Info {
             Err(_) =>
             // return a python error
             {
-                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                return Err(pyo3::exceptions::PyKeyError::new_err(format!(
                     "invalid info key: {}",
                     key
                 )))

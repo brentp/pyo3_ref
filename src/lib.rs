@@ -1,48 +1,91 @@
-use std::sync::{Arc, Mutex};
-use pyo3::prelude::*;
 use noodles::vcf;
+use pyo3::prelude::*;
+use std::sync::Arc;
 
 #[pyclass]
-struct InfoWrapper {
-    record: Arc<Mutex<vcf::Record>>,
-}
-
-#[pymethods]
-impl InfoWrapper {
-    fn set(&self, key: &str, value: i32) -> PyResult<()> {
-        let mut record = self.record.lock().unwrap();
-        // Adjust according to the actual noodles API to set a field in Info.
-        let val = vcf::record::info::field::Value::Integer(value);
-        let key = vcf::record::info::field::Key::Other(key);
-        record.info_mut().insert(key, Some(val));
-        Ok(())
-    }
+struct Variant {
+    inner: Arc<vcf::Record>,
 }
 
 #[pyclass]
-struct RecordWrapper {
-    record: Arc<Mutex<vcf::Record>>,
+struct Info {
+    variant: Py<Variant>,
 }
 
 #[pymethods]
-impl RecordWrapper {
-    #[new]
-    fn new() -> Self {
-        RecordWrapper {
-            record: Arc::new(Mutex::new(vcf::Record::default())),
-        }
+impl Variant {
+    #[getter]
+    fn chromosome(&self) -> PyResult<String> {
+        Ok(self.inner.chromosome().to_string())
     }
 
-    fn info(&self) -> InfoWrapper {
-        InfoWrapper {
-            record: Arc::clone(&self.record),
-        }
+    #[getter]
+    fn start(&self) -> PyResult<i64> {
+        Ok((usize::from(self.inner.position()) - 1) as i64)
+    }
+
+    #[getter]
+    fn stop(&self) -> PyResult<i64> {
+        Ok((usize::from(self.inner.end().unwrap_or(self.inner.position())) - 1) as i64)
+    }
+
+    #[getter]
+    fn info(&self, py: Python) -> PyResult<Py<Info>> {
+        let info = Info {
+            variant: Py::new(
+                py,
+                Variant {
+                    inner: Arc::clone(&self.inner),
+                },
+            )?,
+        };
+        Py::new(py, info)
+    }
+}
+
+#[pymethods]
+impl Info {
+    fn get(&self, key: &str, py: Python<'_>) -> PyResult<Option<String>> {
+        let mut guard = self.variant.as_ref(py).borrow_mut();
+        let variant = &mut *guard;
+
+        let o: vcf::record::info::field::Key = match key.parse() {
+            Ok(key) => key,
+            Err(_) =>
+            // return a python error
+            {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "invalid info key: {}",
+                    key
+                )))
+            }
+        };
+
+        Ok(variant.inner.info().get(&o).map(|v| format!("{:?}", v)))
     }
 }
 
 #[pymodule]
-fn noodles_wrapper(py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_class::<RecordWrapper>()?;
-    m.add_class::<InfoWrapper>()?;
+fn py_noodles_vcf(_py: Python, m: &PyModule) -> PyResult<()> {
+    m.add_class::<Variant>()?;
+    m.add_class::<Info>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_chromosome() {
+        Python::with_gil(|py| {
+            // write a test to check the chromosome
+            let record = vcf::Record::default();
+            let variant = Variant {
+                inner: Arc::new(record),
+            };
+            let py_variant: Py<Variant> = Py::new(py, variant).unwrap();
+            pyo3::py_run!(py, py_variant, "assert py_variant.chromosome == '.'");
+        });
+    }
 }

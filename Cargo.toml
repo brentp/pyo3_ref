@@ -13,6 +13,7 @@ name = "pyo3_ref"
 [dependencies]
 noodles = {version = "0.52.0", features=["vcf"]}
 pyo3 = {version="0.19.2", features=["auto-initialize", "abi3", "abi3-py37"]}
+xvcf = { git = "https://github.com/brentp/xvcf-rs" , branch = "no-generics"}
 
 [features]
 extension-module=["pyo3/extension-module"]

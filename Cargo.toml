@@ -1,20 +1,14 @@
 [package]
-name = "pyo3_ref"
+name = "example"
 version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-crate-type = ["cdylib"]
-name = "pyo3_ref"
+name = "example"
 
 
 [dependencies]
-noodles = {version = "0.52.0", features=["vcf"]}
-pyo3 = {version="0.19.2", features=["auto-initialize", "abi3", "abi3-py37"]}
-xvcf = { git = "https://github.com/brentp/xvcf-rs" , branch = "no-generics"}
+mlua = {version = "0.9.1", features=["luau", "send", "parking_lot"]}
 
-[features]
-extension-module=["pyo3/extension-module"]
-default=["extension-module"]

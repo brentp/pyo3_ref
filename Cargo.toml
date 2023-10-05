@@ -5,10 +5,12 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[lib]
+[[bin]]
 name = "example"
+path = "src/lib.rs"
 
 
 [dependencies]
 mlua = {version = "0.9.1", features=["luau", "send", "parking_lot"]}
+parking_lot = "0.12.1"
 

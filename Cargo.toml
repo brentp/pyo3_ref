@@ -11,6 +11,5 @@ path = "src/lib.rs"
 
 
 [dependencies]
-mlua = {version = "0.9.1", features=["luau", "send", "parking_lot"]}
-parking_lot = "0.12.1"
-
+noodles = { version = "0.54.0", features = ["vcf", "bcf", "core"] }
+noodles-util = {version = "0.26.0", features = ["variant"] }

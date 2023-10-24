@@ -4,12 +4,11 @@ use noodles_util::variant;
 use std::io;
 
 struct QueryHolder<'r, 'h: 'r> {
-    query: Box<dyn Iterator<Item = io::Result<vcf::Record>>>,
+    query: Box<dyn Iterator<Item = io::Result<vcf::Record>> + 'r>,
     header: &'h vcf::Header,
-    reader: &'r variant::indexed_reader::IndexedReader<std::fs::File>,
 }
 
-fn get_qh<'h, 'r: 'h>(
+fn get_qh<'r, 'h: 'r>(
     reader: &'r mut variant::IndexedReader<std::fs::File>,
     header: &'h vcf::Header,
     region: &Region,
@@ -18,7 +17,6 @@ fn get_qh<'h, 'r: 'h>(
     let qh = QueryHolder {
         query: Box::new(q),
         header: header,
-        reader,
     };
     Ok(qh)
 }
@@ -29,9 +27,11 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut reader = variant::indexed_reader::Builder::default().build_from_path(vcf_path)?;
     let header = reader.read_header()?;
 
-    let region = "chr1".parse()?;
+    let region = "1".parse()?;
 
-    let qh = get_qh(&mut reader, &header, &region)?;
+    let mut qh = get_qh(&mut reader, &header, &region)?;
+    let variant = qh.query.next().unwrap()?;
+    eprintln!("{:?}", variant);
 
     Ok(())
 }

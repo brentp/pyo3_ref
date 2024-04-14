@@ -2,28 +2,93 @@ use mlua::prelude::LuaValue;
 use mlua::{AnyUserData, Lua, MetaMethod, UserData, UserDataFields, UserDataMethods};
 use parking_lot::Mutex;
 use rust_htslib::bcf;
-use rust_htslib::bcf::record::Buffer;
+use rust_htslib::bcf::record::{Buffer, GenotypeAllele};
 use std::sync::Arc;
 
 struct SBuffer(bcf::record::BufferBacked<'static, Vec<&'static [i32]>, Buffer>);
 
+struct GTAllele(bcf::record::GenotypeAllele);
+struct Genotype(Vec<GTAllele>);
+
+impl std::fmt::Debug for GTAllele {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
+    }
+}
+
 unsafe impl Send for SBuffer {}
 impl UserData for SBuffer {}
+impl UserData for GTAllele {}
+impl UserData for Genotype {}
+
+use std::fmt;
+impl fmt::Display for Genotype {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let &Genotype(ref alleles) = self;
+        write!(f, "{}", alleles[0].0)?;
+        for allele in alleles[1..].iter() {
+            let allele = allele.0;
+            let sep = match allele {
+                GenotypeAllele::Phased(_) | GenotypeAllele::PhasedMissing => "|",
+                GenotypeAllele::Unphased(_) | GenotypeAllele::UnphasedMissing => "/",
+            };
+            write!(f, "{}{}", sep, allele)?;
+        }
+        Ok(())
+    }
+}
 
 fn register_variant(lua: &Lua) -> mlua::Result<()> {
+    lua.register_userdata_type::<Genotype>(|reg| {
+        reg.add_meta_function(MetaMethod::ToString, |_lua, this: AnyUserData| {
+            let gts = format!("{}", this.borrow::<Genotype>()?);
+            Ok(gts)
+        });
+
+        // index to get GTAllele
+        reg.add_meta_function(
+            MetaMethod::Index,
+            |_lua, (this, idx): (AnyUserData, usize)| {
+                let gts = this.borrow::<Genotype>()?;
+                gts.0
+                    .get(idx - 1)
+                    .map(|allele| GTAllele(allele.0))
+                    .ok_or_else(|| {
+                        let msg =
+                            format!("index out of bounds: {} in len: {}", idx - 1, gts.0.len());
+                        mlua::Error::RuntimeError(msg)
+                    })
+            },
+        );
+    })?;
+
+    lua.register_userdata_type::<GTAllele>(|reg| {
+        reg.add_meta_function(MetaMethod::ToString, |_lua, this: AnyUserData| {
+            Ok(this.borrow::<GTAllele>()?.0.to_string())
+        });
+    })?;
     lua.register_userdata_type::<Arc<Mutex<SBuffer>>>(|reg| {
         reg.add_meta_function(
             MetaMethod::Index,
             |_lua, (this, idx): (AnyUserData, usize)| {
-                eprintln!("indexing into SBuffer index: {:?}", idx);
-                this.borrow::<Arc<Mutex<SBuffer>>>()?
-                    .lock()
-                    .0
+                let ab = this.borrow::<Arc<Mutex<SBuffer>>>()?;
+                let buffer = &ab.lock().0;
+                let L = buffer.len();
+                buffer
                     .get(idx - 1)
                     // TODO: make this get phased and allele with >> 1 - 1 and & 1.
-                    .map(|&x| x.iter().copied().collect::<Vec<i32>>())
+                    //.map(|&x| x.iter().copied().collect::<Vec<i32>>())
+                    .map(|&x| {
+                        let gts = x
+                            .iter()
+                            .map(|&allele_int| {
+                                GTAllele(bcf::record::GenotypeAllele::from(allele_int))
+                            })
+                            .collect::<Vec<GTAllele>>();
+                        Genotype(gts)
+                    })
                     .ok_or_else(|| {
-                        let msg = format!("index out of bounds");
+                        let msg = format!("index out of bounds: {} in len: {}", idx - 1, L);
                         mlua::Error::RuntimeError(msg)
                     })
             },
@@ -95,7 +160,10 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     let get_expression = r#"return variant.id"#;
     let set_expression = r#"variant.id = 'rsabcd'"#;
     let gts_expr = r#"local gts = variant.genotypes; 
-    for i = 1, #gts do print(gts[i][1]) end
+    for i = 1, #gts do 
+    print(gts[i]) 
+    print(gts[i][1], gts[i][2]) 
+    end
     "#;
     let get_exp = lua
         .load(get_expression)
@@ -112,7 +180,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     vcf.write(&record).unwrap();
 
     lua.scope(|scope| {
-        let ud = scope.create_any_userdata_ref(&record)?;
+        let ud = scope.create_any_userdata_ref_mut(&mut record)?;
         globals.raw_set("variant", ud)?;
         let result = get_exp.call::<_, String>(())?;
         eprintln!("result of getter: {}", result);

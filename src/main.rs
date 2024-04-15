@@ -2,13 +2,15 @@ use mlua::prelude::LuaValue;
 use mlua::{AnyUserData, Lua, MetaMethod, UserData, UserDataFields, UserDataMethods};
 use parking_lot::Mutex;
 use rust_htslib::bcf;
-use rust_htslib::bcf::record::{Buffer, GenotypeAllele};
+use rust_htslib::bcf::record::{self, GenotypeAllele};
 use std::sync::Arc;
 
-struct SBuffer(bcf::record::BufferBacked<'static, Vec<&'static [i32]>, Buffer>);
+struct I32Buffer(bcf::record::BufferBacked<'static, Vec<&'static [i32]>, record::Buffer>);
 
 struct GTAllele(bcf::record::GenotypeAllele);
 struct Genotype(Vec<GTAllele>);
+
+struct Genotypes(Arc<Mutex<I32Buffer>>);
 
 impl std::fmt::Debug for GTAllele {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -16,10 +18,11 @@ impl std::fmt::Debug for GTAllele {
     }
 }
 
-unsafe impl Send for SBuffer {}
-impl UserData for SBuffer {}
+unsafe impl Send for I32Buffer {}
+impl UserData for I32Buffer {}
 impl UserData for GTAllele {}
 impl UserData for Genotype {}
+impl UserData for Genotypes {}
 
 use std::fmt;
 impl fmt::Display for Genotype {
@@ -67,17 +70,15 @@ fn register_variant(lua: &Lua) -> mlua::Result<()> {
             Ok(this.borrow::<GTAllele>()?.0.to_string())
         });
     })?;
-    lua.register_userdata_type::<Arc<Mutex<SBuffer>>>(|reg| {
+    lua.register_userdata_type::<Genotypes>(|reg| {
         reg.add_meta_function(
             MetaMethod::Index,
             |_lua, (this, idx): (AnyUserData, usize)| {
-                let ab = this.borrow::<Arc<Mutex<SBuffer>>>()?;
-                let buffer = &ab.lock().0;
-                let L = buffer.len();
+                let ab = this.borrow::<Genotypes>()?;
+                let buffer = &ab.0.lock().0;
+                let len = buffer.len();
                 buffer
                     .get(idx - 1)
-                    // TODO: make this get phased and allele with >> 1 - 1 and & 1.
-                    //.map(|&x| x.iter().copied().collect::<Vec<i32>>())
                     .map(|&x| {
                         let gts = x
                             .iter()
@@ -88,13 +89,13 @@ fn register_variant(lua: &Lua) -> mlua::Result<()> {
                         Genotype(gts)
                     })
                     .ok_or_else(|| {
-                        let msg = format!("index out of bounds: {} in len: {}", idx - 1, L);
+                        let msg = format!("index out of bounds: {} in len: {}", idx - 1, len);
                         mlua::Error::RuntimeError(msg)
                     })
             },
         );
         reg.add_meta_function(MetaMethod::Len, |_lua, this: AnyUserData| {
-            let len = this.borrow::<Arc<Mutex<SBuffer>>>()?.lock().0.len();
+            let len = this.borrow::<Genotypes>()?.0.lock().0.len();
             Ok(len)
         });
     })?;
@@ -125,7 +126,8 @@ fn register_variant(lua: &Lua) -> mlua::Result<()> {
             let genotypes = this.format(b"GT");
             match genotypes.integer() {
                 Ok(genotypes) => {
-                    let sb = Arc::new(Mutex::new(SBuffer(genotypes)));
+                    eprintln!("genotypes: {:?}", genotypes);
+                    let sb = Genotypes(Arc::new(Mutex::new(I32Buffer(genotypes))));
                     Ok(sb)
                 }
                 Err(e) => Err(mlua::Error::RuntimeError(e.to_string())),

@@ -63,7 +63,7 @@ impl Drop for Variant {
 
 fn start_getter(
     scope: &mut v8::HandleScope,
-    _key: v8::Local<v8::Name>,
+    key: v8::Local<v8::Name>,
     args: v8::PropertyCallbackArguments,
     mut rv: v8::ReturnValue,
 ) {
@@ -74,7 +74,28 @@ fn start_getter(
     let variant_ptr = external.value() as *const Variant;
     let variant = unsafe { &*variant_ptr };
 
-    rv.set(v8::Number::new(scope, variant.start() as f64).into());
+    match key.to_rust_string_lossy(scope).as_bytes() {
+        b"start" => {
+            rv.set(v8::Number::new(scope, variant.start() as f64).into());
+        }
+        b"stop" => {
+            rv.set(v8::Number::new(scope, variant.record.end() as f64).into());
+        }
+        b"chrom" => {
+            let tid = variant.record.rid().unwrap();
+            let name = unsafe {String::from_utf8_unchecked(variant.record.header().rid2name(tid).unwrap().to_vec()) }; 
+            let name_str = v8::String::new(scope, &name).unwrap();
+            rv.set(name_str.into());
+        }
+        _ => {
+            //rv.set(v8::Undefined(scope).into());
+            // set an error
+            let message = v8::String::new(scope, "Invalid key").unwrap();
+            let error = v8::Exception::error(scope, message);
+            rv.set(error.into());
+        }
+    }
+
 }
 
 fn weak_callback(
@@ -100,7 +121,11 @@ fn create_variant_object<'a>(
     object_template.set_internal_field_count(1);
 
     let start_name = v8::String::new(scope, "start").unwrap();
+    let stop_name = v8::String::new(scope, "stop").unwrap();
+    let chrom_name = v8::String::new(scope, "chrom").unwrap();
     object_template.set_accessor(start_name.into(), start_getter);
+    object_template.set_accessor(stop_name.into(), start_getter);
+    object_template.set_accessor(chrom_name.into(), start_getter);
 
     let object = object_template.new_instance(scope).unwrap();
 
@@ -144,11 +169,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut weak_refs : Vec<v8::Weak<v8::Object>> = Vec::new();
     let n = 1000000;
     for _i in 0..n {
+        //isolate.adjust_amount_of_external_allocated_memory(128);
         let record = create_vcf_record(&header, &vcf)?;
         let variant = Arc::new(Variant::new(record));
 
         // Create the variant object in V8
         let (variant_object, weak) = create_variant_object(scope, variant.clone());
+
         weak_refs.push(weak);
 
         // Set the variant object in the global context
@@ -157,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         global.set(scope, variant_name.into(), variant_object.into());
 
         // Run the JavaScript code
-        let code = v8::String::new(scope, "variant.start").unwrap();
+        let code = v8::String::new(scope, "variant.chrom").unwrap();
         let script = v8::Script::compile(scope, code, None).unwrap();
         let result = script.run(scope).unwrap();
 

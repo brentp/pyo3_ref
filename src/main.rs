@@ -1,67 +1,40 @@
 use std::sync::Arc;
-
-use rust_htslib::bcf::{self, Record};
-use rust_htslib::bcf::record::GenotypeAllele;
 use v8;
 
 // see: https://github.com/denoland/deno/blob/41cad2179fb36c2371ab84ce587d3460af64b5fb/ext/napi/lib.rs#L522-L527
 
 struct Variant {
-    record: rust_htslib::bcf::Record,
+    _chrom: String,
+    _start: i32,
+    _end: i32,
+    _make_this_use_memory: [u64; 128]
 }
 
 
 impl Variant {
-    fn new(record: rust_htslib::bcf::Record) -> Self {
-        Self { record }
+    fn new(chrom: String, start: i32, end: i32) -> Self {
+        Self { _chrom: chrom, _start: start, _end: end, _make_this_use_memory: [0; 128] }
     }
 
     fn start(&self) -> i64 {
-        self.record.pos() as i64
+        self._start as i64
     }
-}
-
-fn create_header() -> bcf::Header {
-    let mut header = bcf::Header::new();
-    header.push_record(r#"##contig=<ID=chr1,length=10000>"#.as_bytes());
-    header.push_record(
-        r#"##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">"#.as_bytes(),
-    );
-    header.push_record(r#"##FILTER=<ID=PASS,Description="All filters passed">"#.as_bytes());
-    header.push_record(
-        r#"##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">"#.as_bytes(),
-    );
-    header.push_sample("NA12878".as_bytes());
-    header.push_sample("NA12879".as_bytes());
-    header
-}
-
-fn create_vcf_record(_header: &bcf::Header, vcf: &bcf::Writer) -> Result<Record, Box<dyn std::error::Error>> {
-    let mut record = vcf.empty_record();
-    let _ = record.set_rid(Some(vcf.header().name2rid(b"chr1").unwrap()));
-    record.set_pos(6);
-    record.set_alleles(&[b"A", b"T"]).unwrap();
-    record.set_id(b"rs1234").unwrap();
-    record.set_filters(&["PASS".as_bytes()]).unwrap();
-    record.push_info_integer(b"DP", &[10]).unwrap();
-    let alleles = &[
-        GenotypeAllele::Unphased(0),
-        GenotypeAllele::Phased(1),
-        GenotypeAllele::Unphased(1),
-        GenotypeAllele::Unphased(1),
-    ];
-    record.push_genotypes(alleles).unwrap();
-    Ok(record)
+    fn end(&self) -> i64 {
+        self._end as i64
+    }
+    fn chrom(&self) -> &str {
+        &self._chrom
+    }
 }
 
 impl Drop for Variant {
+    // never gets called.
     fn drop(&mut self) {
         eprintln!("Dropping variant");
-        // Cleanup code if necessary
     }
 }
 
-fn start_getter(
+fn attr_getter(
     scope: &mut v8::HandleScope,
     key: v8::Local<v8::Name>,
     args: v8::PropertyCallbackArguments,
@@ -79,11 +52,10 @@ fn start_getter(
             rv.set(v8::Number::new(scope, variant.start() as f64).into());
         }
         b"stop" => {
-            rv.set(v8::Number::new(scope, variant.record.end() as f64).into());
+            rv.set(v8::Number::new(scope, variant.end() as f64).into());
         }
         b"chrom" => {
-            let tid = variant.record.rid().unwrap();
-            let name = unsafe {String::from_utf8_unchecked(variant.record.header().rid2name(tid).unwrap().to_vec()) }; 
+            let name = unsafe {String::from_utf8_unchecked(variant.chrom().into()) }; 
             let name_str = v8::String::new(scope, &name).unwrap();
             rv.set(name_str.into());
         }
@@ -123,9 +95,9 @@ fn create_variant_object<'a>(
     let start_name = v8::String::new(scope, "start").unwrap();
     let stop_name = v8::String::new(scope, "stop").unwrap();
     let chrom_name = v8::String::new(scope, "chrom").unwrap();
-    object_template.set_accessor(start_name.into(), start_getter);
-    object_template.set_accessor(stop_name.into(), start_getter);
-    object_template.set_accessor(chrom_name.into(), start_getter);
+    object_template.set_accessor(start_name.into(), attr_getter);
+    object_template.set_accessor(stop_name.into(), attr_getter);
+    object_template.set_accessor(chrom_name.into(), attr_getter);
 
     let object = object_template.new_instance(scope).unwrap();
 
@@ -148,9 +120,6 @@ fn create_variant_object<'a>(
     (object, weak)
 }
 
-fn trigger_gc(isolate: &mut v8::Isolate) {
-    isolate.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize V8
@@ -163,20 +132,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = v8::Context::new(handle_scope, Default::default());
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
-    // Create header and VCF record
-    let header = create_header();
-    let vcf = bcf::Writer::from_path("_test.vcf", &header, true, bcf::Format::Vcf).unwrap();
     let mut weak_refs : Vec<v8::Weak<v8::Object>> = Vec::new();
     let n = 1000000;
-    for _i in 0..n {
+    for i in 0..n {
         //isolate.adjust_amount_of_external_allocated_memory(128);
-        let record = create_vcf_record(&header, &vcf)?;
-        let variant = Arc::new(Variant::new(record));
+        let record = Variant::new("chr1".to_string(), i, i + 1);
+        let variant = Arc::new(record);
 
         // Create the variant object in V8
         let (variant_object, weak) = create_variant_object(scope, variant.clone());
 
-        weak_refs.push(weak);
+        //weak_refs.push(weak);
 
         // Set the variant object in the global context
         let global = context.global(scope);
@@ -184,13 +150,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         global.set(scope, variant_name.into(), variant_object.into());
 
         // Run the JavaScript code
-        let code = v8::String::new(scope, "variant.chrom").unwrap();
+        let code = v8::String::new(scope, "variant.start").unwrap();
         let script = v8::Script::compile(scope, code, None).unwrap();
         let result = script.run(scope).unwrap();
 
         // Convert the result to a string and print it
         let result_str = result.to_string(scope).unwrap();
-        println!("variant.start: {}, i: {}/{}", result_str.to_rust_string_lossy(scope), _i, n);
+        println!("variant.start: {}, /{}", result_str.to_rust_string_lossy(scope), n);
     }
     unsafe {
         v8::V8::dispose();

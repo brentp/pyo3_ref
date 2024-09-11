@@ -1,8 +1,6 @@
 use std::sync::Arc;
 use v8;
 
-// see: https://github.com/denoland/deno/blob/41cad2179fb36c2371ab84ce587d3460af64b5fb/ext/napi/lib.rs#L522-L527
-
 #[derive(Debug)]
 struct Variant {
     _chrom: String,
@@ -34,17 +32,15 @@ impl Drop for Variant {
     }
 }
 
-#[derive(Debug)]
+// Change VariantWrapper to use a raw pointer instead of Arc
 struct VariantWrapper {
-    variant: Arc<Variant>,
+    variant: *const Variant,
 }
 
 impl v8::cppgc::GarbageCollected for VariantWrapper {
-    /* 
     fn trace(&self, _visitor: &v8::cppgc::Visitor) {
-        // No need to trace Arc<Variant> as it doesn't contain any GC references
+        // We don't need to trace the raw pointer
     }
-    */
 }
 
 fn attr_getter(
@@ -55,14 +51,11 @@ fn attr_getter(
 ) {
     let this = args.this();
     let wrapper = unsafe {
-        v8::Object::unwrap::<TAG, VariantWrapper>(scope, this)
+        let internal_field = this.get_internal_field(scope, 0).unwrap();
+        let external: v8::Local<v8::External> = v8::Local::cast(internal_field);
+        &*(external.value() as *const VariantWrapper)
     };
-    println!("attr_getter called");
-    let wrapper = wrapper.unwrap();
-    println!("attr_getter called 2");
-    let variant = &wrapper.variant;
-    println!("attr_getter called 3");
-    println!("{:?}", variant);
+    let variant = unsafe { &*wrapper.variant };
 
     match key.to_rust_string_lossy(scope).as_bytes() {
         b"start" => {
@@ -90,12 +83,8 @@ fn create_variant_object<'a>(
     scope: &mut v8::HandleScope<'a>,
     variant: Arc<Variant>,
 ) -> v8::Local<'a, v8::Object> {
-    let wrapper = unsafe { v8::cppgc::make_garbage_collected::<VariantWrapper>(
-        scope.get_cpp_heap().unwrap(),
-        VariantWrapper { variant },
-    ) };
-
     let object_template = v8::ObjectTemplate::new(scope);
+    object_template.set_internal_field_count(1);
 
     let start_name = v8::String::new(scope, "start").unwrap();
     let stop_name = v8::String::new(scope, "stop").unwrap();
@@ -105,9 +94,14 @@ fn create_variant_object<'a>(
     object_template.set_accessor(chrom_name.into(), attr_getter);
 
     let object = object_template.new_instance(scope).unwrap();
-    unsafe {
-        v8::Object::wrap::<TAG, VariantWrapper>(scope, object, &wrapper);
-    }
+
+    let wrapper = unsafe { v8::cppgc::make_garbage_collected::<VariantWrapper>(
+        scope.get_cpp_heap().unwrap(),
+        VariantWrapper { variant: Arc::into_raw(variant) },
+    )};
+    let wrapper_ptr = &*wrapper as *const VariantWrapper;
+    let external = v8::External::new(scope, wrapper_ptr as *mut _);
+    object.set_internal_field(0, external.into());
 
     object
 }
@@ -120,10 +114,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     v8::cppgc::initalize_process(platform.clone());
 
-
     let heap =
-    v8::cppgc::Heap::create(platform, v8::cppgc::HeapCreateParams::default());
-
+    v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
 
     let isolate = &mut v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
 
@@ -139,7 +131,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Create the variant object in V8
         let variant_object = create_variant_object(scope, variant.clone());
-
 
         // Set the variant object in the global context
         let global = context.global(scope);

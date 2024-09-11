@@ -3,6 +3,7 @@ use v8;
 
 // see: https://github.com/denoland/deno/blob/41cad2179fb36c2371ab84ce587d3460af64b5fb/ext/napi/lib.rs#L522-L527
 
+#[derive(Debug)]
 struct Variant {
     _chrom: String,
     _start: i32,
@@ -33,6 +34,7 @@ impl Drop for Variant {
     }
 }
 
+#[derive(Debug)]
 struct VariantWrapper {
     variant: Arc<Variant>,
 }
@@ -52,14 +54,15 @@ fn attr_getter(
     mut rv: v8::ReturnValue,
 ) {
     let this = args.this();
-    let wrapper = v8::Local::<v8::Object>::try_from(this)
-        .ok()
-        .and_then(|obj| obj.get_internal_field(scope, 0))
-        .and_then(|field| v8::Local::<v8::External>::try_from(field).ok())
-        .and_then(|ext| Some(ext.value() as *mut VariantWrapper))
-        .expect("Failed to get VariantWrapper");
-
-    let variant = unsafe { &(*wrapper).variant };
+    let wrapper = unsafe {
+        v8::Object::unwrap::<TAG, VariantWrapper>(scope, this)
+    };
+    println!("attr_getter called");
+    let wrapper = wrapper.unwrap();
+    println!("attr_getter called 2");
+    let variant = &wrapper.variant;
+    println!("attr_getter called 3");
+    println!("{:?}", variant);
 
     match key.to_rust_string_lossy(scope).as_bytes() {
         b"start" => {
@@ -69,13 +72,11 @@ fn attr_getter(
             rv.set(v8::Number::new(scope, variant.end() as f64).into());
         }
         b"chrom" => {
-            let name = unsafe {String::from_utf8_unchecked(variant.chrom().into()) }; 
-            let name_str = v8::String::new(scope, &name).unwrap();
+            let name = variant.chrom();
+            let name_str = v8::String::new(scope, name).unwrap();
             rv.set(name_str.into());
         }
         _ => {
-            //rv.set(v8::Undefined(scope).into());
-            // set an error
             let message = v8::String::new(scope, "Invalid key").unwrap();
             let error = v8::Exception::error(scope, message);
             rv.set(error.into());
@@ -95,7 +96,6 @@ fn create_variant_object<'a>(
     ) };
 
     let object_template = v8::ObjectTemplate::new(scope);
-    object_template.set_internal_field_count(1);
 
     let start_name = v8::String::new(scope, "start").unwrap();
     let stop_name = v8::String::new(scope, "stop").unwrap();
@@ -131,7 +131,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = v8::Context::new(handle_scope, Default::default());
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
-    let mut weak_refs : Vec<v8::Weak<v8::Object>> = Vec::new();
     let n = 1000000;
     for i in 0..n {
         //isolate.adjust_amount_of_external_allocated_memory(128);
@@ -141,7 +140,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Create the variant object in V8
         let variant_object = create_variant_object(scope, variant.clone());
 
-        //weak_refs.push(weak);
 
         // Set the variant object in the global context
         let global = context.global(scope);

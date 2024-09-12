@@ -99,14 +99,15 @@ fn create_variant_object<'a>(
     unsafe {
         v8::Object::wrap::<TAG, Variant>(scope, object, &wrapper);
     }
+    scope.adjust_amount_of_external_allocated_memory(140);
 
     object
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize V8 with cppgc
-    let platform = v8::new_default_platform(0, false).make_shared();
-    v8::V8::set_flags_from_string("--no_freeze_flags_after_init --expose-gc");
+    let platform = v8::new_default_platform(1, false).make_shared();
+    v8::V8::set_flags_from_string("--no_freeze_flags_after_init --expose-gc --trace_gc --trace_gc_verbose --trace_gc_timer");
 
     v8::V8::initialize_platform(platform.clone());
     v8::V8::initialize();
@@ -144,17 +145,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if i % 100000 == 0 {
             scope.low_memory_notification();
             scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
-
+            unsafe { scope.get_cpp_heap().unwrap().collect_garbage_for_testing(v8::cppgc::EmbedderStackState::MayContainHeapPointers); }
         }
         global.delete(scope, variant_name.into());
 
         // Convert the result to a string and print it
         let result_str = result.to_string(scope).unwrap();
-        println!("variant.start: {}, /{}", result_str.to_rust_string_lossy(scope), n);
+        if i % 1000 == 0 {
+            println!("variant.start: {}, /{}", result_str.to_rust_string_lossy(scope), n);
+        }
     }
-
-    // Perform garbage collection
-    scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
 
     unsafe {
         v8::V8::dispose();

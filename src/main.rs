@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use v8;
 
 #[derive(Debug)]
@@ -33,11 +32,9 @@ impl Drop for Variant {
 }
 
 
-struct VariantWrapper {
-    variant: *const Variant,
-}
 
-impl v8::cppgc::GarbageCollected for VariantWrapper {
+
+impl v8::cppgc::GarbageCollected for Variant {
     fn trace(&self, _visitor: &v8::cppgc::Visitor) {
     }
 }
@@ -50,8 +47,8 @@ fn attr_getter(
 ) {
     let this = args.this();
 
-    let wrapper = unsafe { v8::Object::unwrap::<TAG, VariantWrapper>(scope, this) }.expect("Failed to unwrap VariantWrapper");
-    let variant = unsafe { &*wrapper.variant };
+    let wrapper = unsafe { v8::Object::unwrap::<TAG, Variant>(scope, this) }.expect("Failed to unwrap VariantWrapper");
+    let variant = &*wrapper ;
 
     match key.to_rust_string_lossy(scope).as_bytes() {
         b"start" => {
@@ -77,7 +74,7 @@ const TAG: u16 = 1;
 
 fn create_variant_object<'a>(
     scope: &mut v8::HandleScope<'a>,
-    variant: Arc<Variant>,
+    variant: Variant,
 ) -> v8::Local<'a, v8::Object> {
     let object_template = v8::ObjectTemplate::new(scope);
     object_template.set_internal_field_count(1);
@@ -91,13 +88,13 @@ fn create_variant_object<'a>(
 
     let object = object_template.new_instance(scope).unwrap();
 
-    let wrapper = unsafe { v8::cppgc::make_garbage_collected::<VariantWrapper>(
+    let wrapper = unsafe { v8::cppgc::make_garbage_collected::<Variant>(
         scope.get_cpp_heap().unwrap(),
-        VariantWrapper { variant: Arc::into_raw(variant) },
+        variant,
     )};
 
     unsafe {
-        v8::Object::wrap::<TAG, VariantWrapper>(scope, object, &wrapper);
+        v8::Object::wrap::<TAG, Variant>(scope, object, &wrapper);
     }
 
     object
@@ -120,14 +117,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let context = v8::Context::new(handle_scope, Default::default());
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
-    let n = 1000000;
+    let n = 2000000;
     for i in 0..n {
         //isolate.adjust_amount_of_external_allocated_memory(128);
         let record = Variant::new("chr1".to_string(), i, i + 1);
-        let variant = Arc::new(record);
+        //let variant = Arc::new(record);
 
         // Create the variant object in V8
-        let variant_object = create_variant_object(scope, variant.clone());
+        let variant_object = create_variant_object(scope, record);
 
         // Set the variant object in the global context
         let global = context.global(scope);

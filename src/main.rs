@@ -5,12 +5,17 @@ struct Variant {
     _chrom: String,
     _start: i32,
     _end: i32,
-    _make_this_use_memory: [u64; 128]
+    _make_this_use_memory: [u64; 128],
 }
 
 impl Variant {
     fn new(chrom: String, start: i32, end: i32) -> Self {
-        Self { _chrom: chrom, _start: start, _end: end, _make_this_use_memory: [0; 128] }
+        Self {
+            _chrom: chrom,
+            _start: start,
+            _end: end,
+            _make_this_use_memory: [0; 128],
+        }
     }
 
     fn start(&self) -> i64 {
@@ -31,10 +36,8 @@ impl Drop for Variant {
     }
 }
 
-
 impl v8::cppgc::GarbageCollected for Variant {
-    fn trace(&self, _visitor: &v8::cppgc::Visitor) {
-    }
+    fn trace(&self, _visitor: &v8::cppgc::Visitor) {}
 }
 
 fn attr_getter(
@@ -45,7 +48,8 @@ fn attr_getter(
 ) {
     let this = args.this();
 
-    let wrapper = unsafe { v8::Object::unwrap::<TAG, Variant>(scope, this) }.expect("Failed to unwrap VariantWrapper");
+    let wrapper = unsafe { v8::Object::unwrap::<TAG, Variant>(scope, this) }
+        .expect("Failed to unwrap VariantWrapper");
     let variant = &*wrapper;
 
     match key.to_rust_string_lossy(scope).as_bytes() {
@@ -70,7 +74,9 @@ fn attr_getter(
 
 const TAG: u16 = 1;
 
-fn create_object_template<'a>(scope: &mut v8::HandleScope<'a>) -> v8::Local<'a, v8::ObjectTemplate> {
+fn create_object_template<'a>(
+    scope: &mut v8::HandleScope<'a>,
+) -> v8::Local<'a, v8::ObjectTemplate> {
     let object_template = v8::ObjectTemplate::new(scope);
     object_template.set_internal_field_count(1);
 
@@ -91,10 +97,9 @@ fn create_variant_object<'a>(
 ) -> v8::Local<'a, v8::Object> {
     let object = object_template.new_instance(scope).unwrap();
 
-    let wrapper = unsafe { v8::cppgc::make_garbage_collected::<Variant>(
-        scope.get_cpp_heap().unwrap(),
-        variant,
-    )};
+    let wrapper = unsafe {
+        v8::cppgc::make_garbage_collected::<Variant>(scope.get_cpp_heap().unwrap(), variant)
+    };
 
     unsafe {
         v8::Object::wrap::<TAG, Variant>(scope, object, &wrapper);
@@ -107,15 +112,16 @@ fn create_variant_object<'a>(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize V8 with cppgc
     let platform = v8::new_default_platform(1, false).make_shared();
-    v8::V8::set_flags_from_string("--no_freeze_flags_after_init --expose-gc --trace_gc --trace_gc_verbose --trace_gc_timer");
+    v8::V8::set_flags_from_string(
+        "--no_freeze_flags_after_init --expose-gc --trace_gc --trace_gc_verbose --trace_gc_timer",
+    );
 
     v8::V8::initialize_platform(platform.clone());
     v8::V8::initialize();
 
     v8::cppgc::initalize_process(platform.clone());
 
-    let heap =
-    v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
+    let heap = v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
 
     let isolate = &mut v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
 
@@ -145,14 +151,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if i % 100000 == 0 {
             scope.low_memory_notification();
             scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
-            unsafe { scope.get_cpp_heap().unwrap().collect_garbage_for_testing(v8::cppgc::EmbedderStackState::MayContainHeapPointers); }
+            unsafe {
+                scope.get_cpp_heap().unwrap().collect_garbage_for_testing(
+                    v8::cppgc::EmbedderStackState::MayContainHeapPointers,
+                );
+            }
         }
         global.delete(scope, variant_name.into());
 
         // Convert the result to a string and print it
         let result_str = result.to_string(scope).unwrap();
         if i % 1000 == 0 {
-            println!("variant.start: {}, /{}", result_str.to_rust_string_lossy(scope), n);
+            println!(
+                "variant.start: {}, /{}",
+                result_str.to_rust_string_lossy(scope),
+                n
+            );
         }
     }
 
@@ -166,5 +180,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
-
-

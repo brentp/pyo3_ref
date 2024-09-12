@@ -32,14 +32,14 @@ impl Drop for Variant {
     }
 }
 
-// Change VariantWrapper to use a raw pointer instead of Arc
+
 struct VariantWrapper {
     variant: *const Variant,
 }
 
 impl v8::cppgc::GarbageCollected for VariantWrapper {
     fn trace(&self, _visitor: &v8::cppgc::Visitor) {
-        // We don't need to trace the raw pointer
+        eprintln!("tracing")
     }
 }
 

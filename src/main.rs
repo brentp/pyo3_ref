@@ -39,7 +39,6 @@ struct VariantWrapper {
 
 impl v8::cppgc::GarbageCollected for VariantWrapper {
     fn trace(&self, _visitor: &v8::cppgc::Visitor) {
-        eprintln!("tracing")
     }
 }
 
@@ -50,11 +49,8 @@ fn attr_getter(
     mut rv: v8::ReturnValue,
 ) {
     let this = args.this();
-    let wrapper = unsafe {
-        let internal_field = this.get_internal_field(scope, 0).unwrap();
-        let external: v8::Local<v8::External> = v8::Local::cast(internal_field);
-        &*(external.value() as *const VariantWrapper)
-    };
+
+    let wrapper = unsafe { v8::Object::unwrap::<TAG, VariantWrapper>(scope, this) }.expect("Failed to unwrap VariantWrapper");
     let variant = unsafe { &*wrapper.variant };
 
     match key.to_rust_string_lossy(scope).as_bytes() {
@@ -99,9 +95,10 @@ fn create_variant_object<'a>(
         scope.get_cpp_heap().unwrap(),
         VariantWrapper { variant: Arc::into_raw(variant) },
     )};
-    let wrapper_ptr = &*wrapper as *const VariantWrapper;
-    let external = v8::External::new(scope, wrapper_ptr as *mut _);
-    object.set_internal_field(0, external.into());
+
+    unsafe {
+        v8::Object::wrap::<TAG, VariantWrapper>(scope, object, &wrapper);
+    }
 
     object
 }

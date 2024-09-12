@@ -25,7 +25,7 @@ impl Variant {
 }
 
 impl Drop for Variant {
-    // never gets called.
+    // doesn't get called until v8 is disposed
     fn drop(&mut self) {
         eprintln!("Dropping variant");
     }
@@ -106,6 +106,8 @@ fn create_variant_object<'a>(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize V8 with cppgc
     let platform = v8::new_default_platform(0, false).make_shared();
+    v8::V8::set_flags_from_string("--no_freeze_flags_after_init --expose-gc");
+
     v8::V8::initialize_platform(platform.clone());
     v8::V8::initialize();
 
@@ -121,6 +123,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
     let object_template = create_object_template(scope);
+    let code = v8::String::new(scope, "variant.start").unwrap();
+    let script = v8::Script::compile(scope, code, None).unwrap();
+    let global = context.global(scope);
+    let variant_name = v8::String::new(scope, "variant").unwrap();
 
     let n = 2000000;
     for i in 0..n {
@@ -130,19 +136,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let variant_object = create_variant_object(scope, object_template, record);
 
         // Set the variant object in the global context
-        let global = context.global(scope);
-        let variant_name = v8::String::new(scope, "variant").unwrap();
         global.set(scope, variant_name.into(), variant_object.into());
 
         // Run the JavaScript code
-        let code = v8::String::new(scope, "variant.start").unwrap();
-        let script = v8::Script::compile(scope, code, None).unwrap();
         let result = script.run(scope).unwrap();
 
         if i % 100000 == 0 {
-            scope.low_memory_notification()
+            scope.low_memory_notification();
+            scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
+
         }
-        drop(variant_object);
+        global.delete(scope, variant_name.into());
 
         // Convert the result to a string and print it
         let result_str = result.to_string(scope).unwrap();

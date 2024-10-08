@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use v8;
 
 #[derive(Debug)]
@@ -104,7 +106,10 @@ fn create_variant_object<'a>(
     unsafe {
         v8::Object::wrap::<TAG, Variant>(scope, object, &wrapper);
     }
-    scope.adjust_amount_of_external_allocated_memory(140);
+
+    // Calculate and report the memory used by Variant
+    let variant_size = std::mem::size_of::<Variant>();
+    scope.adjust_amount_of_external_allocated_memory(variant_size as i64);
 
     object
 }
@@ -138,15 +143,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n = 2000000;
     for i in 0..n {
         let record = Variant::new("chr1".to_string(), i, i + 1);
+        scope.clear_kept_objects();
 
-        // Create the variant object in V8
-        let variant_object = create_variant_object(scope, object_template, record);
+        //let local_scope = &mut *scope;
+        // deref the scope into another scope
+        let local_scope = scope.deref_mut();
 
-        // Set the variant object in the global context
-        global.set(scope, variant_name.into(), variant_object.into());
+        let variant_object = create_variant_object(local_scope, object_template, record);
+        global.set(local_scope, variant_name.into(), variant_object.into());
 
         // Run the JavaScript code
-        let result = script.run(scope).unwrap();
+        let result = script.run(local_scope).unwrap();
+        drop(local_scope);
 
         if i % 100000 == 0 {
             scope.low_memory_notification();
@@ -156,6 +164,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     v8::cppgc::EmbedderStackState::MayContainHeapPointers,
                 );
             }
+            // Report memory decrease after garbage collection
+            //let variant_size = std::mem::size_of::<Variant>();
+            //scope.adjust_amount_of_external_allocated_memory(-(variant_size as i64 * 100000));
         }
         global.delete(scope, variant_name.into());
 

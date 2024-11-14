@@ -114,7 +114,8 @@ fn create_variant_object<'a>(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize V8 with cppgc
-    let platform = v8::new_default_platform(1, false).make_shared();
+    //let platform = v8::new_default_platform(0, false).make_shared();
+    let platform = v8::new_unprotected_default_platform(0, false).make_shared();
     /*
     v8::V8::set_flags_from_string(
         "--no_freeze_flags_after_init --expose-gc --trace_gc --trace_gc_verbose --trace_gc_timer",
@@ -125,9 +126,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     v8::V8::initialize();
     v8::cppgc::initalize_process(platform.clone());
 
-    let heap = v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
+    let mut heap =
+        v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
 
-    let isolate = &mut v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
+    //let isolate = &mut v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
+    let isolate = &mut v8::Isolate::new(v8::CreateParams::default());
+    isolate.attach_cpp_heap(&mut heap);
 
     let handle_scope = &mut v8::HandleScope::new(isolate);
     let context = v8::Context::new(handle_scope, Default::default());
@@ -187,8 +191,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     unsafe {
         v8::cppgc::shutdown_process();
         v8::V8::dispose();
-        v8::V8::dispose_platform();
     }
+    v8::V8::dispose_platform();
 
     eprintln!("done");
     std::thread::sleep(std::time::Duration::from_secs(2));

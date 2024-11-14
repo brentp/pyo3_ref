@@ -31,16 +31,14 @@ impl Variant {
     }
 }
 
+/*
 impl Drop for Variant {
     // doesn't get called until v8 is disposed
-    fn drop(&mut self) {
-        eprintln!("Dropping variant");
-    }
+    fn drop(&mut self) {}
 }
+*/
 
-impl v8::cppgc::GarbageCollected for Variant {
-    fn trace(&self, _visitor: &v8::cppgc::Visitor) {}
-}
+impl v8::cppgc::GarbageCollected for Variant {}
 
 fn attr_getter(
     scope: &mut v8::HandleScope,
@@ -117,13 +115,14 @@ fn create_variant_object<'a>(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize V8 with cppgc
     let platform = v8::new_default_platform(1, false).make_shared();
+    /*
     v8::V8::set_flags_from_string(
         "--no_freeze_flags_after_init --expose-gc --trace_gc --trace_gc_verbose --trace_gc_timer",
     );
+    */
 
     v8::V8::initialize_platform(platform.clone());
     v8::V8::initialize();
-
     v8::cppgc::initalize_process(platform.clone());
 
     let heap = v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
@@ -143,19 +142,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let n = 2000000;
     for i in 0..n {
         let record = Variant::new("chr1".to_string(), i, i + 1);
-        scope.clear_kept_objects();
+        //scope.clear_kept_objects();
 
         //let local_scope = &mut *scope;
         // deref the scope into another scope
-        let local_scope = scope.deref_mut();
+        {
+            let local_scope = &mut v8::HandleScope::new(scope);
 
-        let variant_object = create_variant_object(local_scope, object_template, record);
-        global.set(local_scope, variant_name.into(), variant_object.into());
+            let variant_object = create_variant_object(local_scope, object_template, record);
+            global.set(local_scope, variant_name.into(), variant_object.into());
 
-        // Run the JavaScript code
-        let result = script.run(local_scope).unwrap();
-        drop(local_scope);
+            // Run the JavaScript code
+            let result = script.run(local_scope).unwrap();
+            //global.delete(local_scope, variant_name.into());
 
+            // Convert the result to a string and print it
+            let result_str = result.to_string(local_scope).unwrap();
+            if i % 1000 == 0 {
+                println!(
+                    "variant.start: {}, /{}",
+                    result_str.to_rust_string_lossy(local_scope),
+                    n
+                );
+            }
+            //local_scope.clear_kept_objects();
+        }
+
+        /*
         if i % 100000 == 0 {
             scope.low_memory_notification();
             scope.request_garbage_collection_for_testing(v8::GarbageCollectionType::Full);
@@ -168,26 +181,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             //let variant_size = std::mem::size_of::<Variant>();
             //scope.adjust_amount_of_external_allocated_memory(-(variant_size as i64 * 100000));
         }
-        global.delete(scope, variant_name.into());
-
-        // Convert the result to a string and print it
-        let result_str = result.to_string(scope).unwrap();
-        if i % 1000 == 0 {
-            println!(
-                "variant.start: {}, /{}",
-                result_str.to_rust_string_lossy(scope),
-                n
-            );
-        }
+        */
     }
-
+    // cleanup
     unsafe {
+        v8::cppgc::shutdown_process();
         v8::V8::dispose();
         v8::V8::dispose_platform();
     }
+
     eprintln!("done");
-    // sleep for 100 seconds
-    std::thread::sleep(std::time::Duration::from_secs(20));
+    std::thread::sleep(std::time::Duration::from_secs(2));
 
     Ok(())
 }

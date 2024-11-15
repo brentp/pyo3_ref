@@ -225,7 +225,6 @@ fn create_variant_object<'a>(
     let wrapper = unsafe {
         v8::cppgc::make_garbage_collected::<Variant>(scope.get_cpp_heap().unwrap(), variant)
     };
-
     unsafe {
         v8::Object::wrap::<TAG, Variant>(scope, object, &wrapper);
     }
@@ -239,8 +238,8 @@ fn create_variant_object<'a>(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize V8 with cppgc
-    //let platform = v8::new_default_platform(0, false).make_shared();
-    let platform = v8::new_unprotected_default_platform(0, false).make_shared();
+    let platform = v8::new_default_platform(0, false).make_shared();
+    //let platform = v8::new_unprotected_default_platform(0, false).make_shared();
     /*
     v8::V8::set_flags_from_string(
         "--no_freeze_flags_after_init --expose-gc --trace_gc --trace_gc_verbose --trace_gc_timer",
@@ -251,27 +250,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     v8::V8::initialize();
     v8::cppgc::initalize_process(platform.clone());
 
-    let mut heap =
-        v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
+    let heap = v8::cppgc::Heap::create(platform.clone(), v8::cppgc::HeapCreateParams::default());
 
-    //let isolate = &mut v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
-    let isolate = &mut v8::Isolate::new(v8::CreateParams::default());
-    isolate.attach_cpp_heap(&mut heap);
+    let isolate = &mut v8::Isolate::new(v8::CreateParams::default().cpp_heap(heap));
+    //let isolate = &mut v8::Isolate::new(v8::CreateParams::default());
+    //isolate.attach_cpp_heap(&mut heap);
 
     let handle_scope = &mut v8::HandleScope::new(isolate);
     let context = v8::Context::new(handle_scope, Default::default());
     let scope = &mut v8::ContextScope::new(handle_scope, context);
 
     let object_template = create_object_template(scope);
-    let code = v8::String::new(scope, "variant.filters").unwrap();
+    let code = v8::String::new(
+        scope,
+        "`${variant.chrom}:${variant.start} ${variant.info('platforms') > 2}`",
+    )
+    .unwrap();
     let script = v8::Script::compile(scope, code, None).unwrap();
     let global = context.global(scope);
     let variant_name = v8::String::new(scope, "variant").unwrap();
 
-    let mut vcf = Reader::from_path("/home/brentp/data/output/HG002.DV.g.vcf.gz")?;
+    //let mut vcf = Reader::from_path("/home/brentp/data/output/HG002.DV.g.vcf.gz")?;
+    let mut vcf = Reader::from_path(
+        "/home/brentp/src/vembrane-benchmark/results/vep/bcf_b/HG004_annotated_vep.bcf",
+    )?;
 
     let mut record_count = 0;
     let mut record = vcf.empty_record();
+
+    // Start timing
+    let start_time = std::time::Instant::now();
+
     while vcf.read(&mut record).is_some() {
         {
             let local_scope = &mut v8::HandleScope::new(scope);
@@ -286,22 +295,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Convert the result to a string and print it
             let result_str = result.to_string(local_scope).unwrap();
-            if record_count % 1000 == 0 {
+            if record_count % 20000 == 0 {
                 println!(
                     "variant.start: {}, /{}",
                     result_str.to_rust_string_lossy(local_scope),
                     record_count
                 );
+                if record_count % 100000 == 0 {
+                    let elapsed_time = start_time.elapsed();
+                    let records_per_second = record_count as f64 / elapsed_time.as_secs_f64();
+                    println!(
+                        "Processed {} records in {:.2?} seconds ({:.2} records/second)",
+                        record_count, elapsed_time, records_per_second
+                    );
+                }
             }
         }
         record_count += 1;
     }
 
+    // Calculate and print the records per second
+    let elapsed_time = start_time.elapsed();
+    let records_per_second = record_count as f64 / elapsed_time.as_secs_f64();
+    println!(
+        "Processed {} records in {:.2?} seconds ({:.2} records/second)",
+        record_count, elapsed_time, records_per_second
+    );
+
     // cleanup
+    /*
     unsafe {
         v8::cppgc::shutdown_process();
         v8::V8::dispose();
     }
+    */
     v8::V8::dispose_platform();
 
     eprintln!("done");
